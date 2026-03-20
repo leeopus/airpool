@@ -237,6 +237,23 @@ func (h *Handler) createNode(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, fmt.Sprintf("pool %q not found, create it first", req.Pool), http.StatusBadRequest)
 		return
 	}
+	// Check if a node with this IP already exists
+	existing, err := h.store.GetNodeByIP(req.IP)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if existing != nil {
+		// Update pool if changed, reset status
+		if existing.Pool != req.Pool {
+			h.store.UpdateNodePool(existing.Name, req.Pool)
+		}
+		h.store.MarkOnline(existing.Name)
+		log.Printf("[api] node re-registered: %s (pool=%s, ip=%s)", existing.Name, req.Pool, req.IP)
+		h.store.AddEvent(existing.Name, "re-registered", fmt.Sprintf("pool=%s, ip=%s", req.Pool, req.IP))
+		jsonOK(w, map[string]string{"status": "ok", "name": existing.Name})
+		return
+	}
 	// Auto-generate name if empty
 	if req.Name == "" {
 		req.Name = fmt.Sprintf("%s-%s", req.Pool, randomHex(4))
@@ -264,6 +281,19 @@ func (h *Handler) getNode(w http.ResponseWriter, r *http.Request, name string) {
 }
 
 func (h *Handler) deleteNode(w http.ResponseWriter, r *http.Request, name string) {
+	// Support ?by=ip to delete by IP address
+	if r.URL.Query().Get("by") == "ip" {
+		node, err := h.store.GetNodeByIP(name)
+		if err != nil {
+			jsonError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if node == nil {
+			jsonOK(w, map[string]string{"status": "ok", "detail": "not found, nothing to delete"})
+			return
+		}
+		name = node.Name
+	}
 	if err := h.store.DeleteNode(name); err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -610,6 +640,33 @@ NODE_IP=$(curl -s4 ifconfig.me || curl -s4 icanhazip.com)
 
 log "Node IP: $NODE_IP"
 
+# ─── Detect existing deployment ─────────────────
+if systemctl is-active --quiet hysteria-server 2>/dev/null || [[ -f /etc/hysteria/config.yaml ]]; then
+    warn "Detected existing AirPool deployment, tearing down..."
+
+    # Stop and disable service
+    systemctl stop hysteria-server 2>/dev/null || true
+    systemctl disable hysteria-server 2>/dev/null || true
+
+    # Remove iptables rules
+    iptables -t nat -D PREROUTING -p udp --dport 20000:40000 -j REDIRECT --to-ports 443 2>/dev/null || true
+
+    # Remove all files
+    rm -f /usr/local/bin/hysteria
+    rm -rf /etc/hysteria
+    rm -f /etc/systemd/system/hysteria-server.service
+    rm -f /etc/systemd/system/hysteria-server@.service
+    systemctl daemon-reload
+
+    # Deregister from config center (best effort)
+    curl -skf -X DELETE "https://${SERVER}/api/nodes/${NODE_IP}?by=ip" \
+        -H "Authorization: ${TOKEN}" 2>/dev/null || true
+
+    log "Old deployment removed."
+fi
+
+# ─── Fresh install ──────────────────────────────
+
 # 1. Get Hysteria2 password from config center
 log "Fetching Hysteria2 password from config center..."
 HY2_PASS=$(curl -skf "https://${SERVER}/api/config?token=${TOKEN}" | grep -o '"hysteria2_password":"[^"]*"' | cut -d'"' -f4)
@@ -617,21 +674,15 @@ HY2_PASS=$(curl -skf "https://${SERVER}/api/config?token=${TOKEN}" | grep -o '"h
 
 # 2. Install Hysteria2
 log "Installing Hysteria2..."
-if command -v hysteria &>/dev/null; then
-    warn "Hysteria2 already installed, skipping..."
-else
-    bash <(curl -fsSL https://get.hy2.sh/)
-fi
+bash <(curl -fsSL https://get.hy2.sh/)
 
 # 3. Generate self-signed certificate
 log "Generating self-signed certificate..."
 CERT_DIR="/etc/hysteria"
 mkdir -p "$CERT_DIR"
-if [[ ! -f "$CERT_DIR/server.crt" ]]; then
-    openssl req -x509 -nodes -newkey ec:<(openssl ecparam -name prime256v1) \
-        -keyout "$CERT_DIR/server.key" -out "$CERT_DIR/server.crt" \
-        -subj "/CN=www.bing.com" -days 3650 2>/dev/null
-fi
+openssl req -x509 -nodes -newkey ec:<(openssl ecparam -name prime256v1) \
+    -keyout "$CERT_DIR/server.key" -out "$CERT_DIR/server.crt" \
+    -subj "/CN=www.bing.com" -days 3650 2>/dev/null
 
 # 4. Write Hysteria2 config
 log "Writing Hysteria2 config..."
@@ -655,7 +706,6 @@ HYSTERIA_EOF
 
 # 5. Setup port hopping (iptables)
 log "Configuring port hopping (20000-40000 -> 443)..."
-# Clean old rules if any
 iptables -t nat -D PREROUTING -p udp --dport 20000:40000 -j REDIRECT --to-ports 443 2>/dev/null || true
 iptables -t nat -A PREROUTING -p udp --dport 20000:40000 -j REDIRECT --to-ports 443
 
@@ -664,7 +714,6 @@ if command -v netfilter-persistent &>/dev/null; then
     netfilter-persistent save
 elif command -v iptables-save &>/dev/null; then
     iptables-save > /etc/iptables.rules
-    # Ensure rules load on boot
     if [[ ! -f /etc/network/if-pre-up.d/iptables ]]; then
         cat > /etc/network/if-pre-up.d/iptables << 'IPTEOF'
 #!/bin/bash

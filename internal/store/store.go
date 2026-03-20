@@ -103,6 +103,17 @@ func (s *Store) CreateNode(name, pool, ip string) error {
 	return err
 }
 
+func (s *Store) GetNodeByIP(ip string) (*Node, error) {
+	n := &Node{}
+	err := s.db.QueryRow(
+		"SELECT name, pool, ip, status, fail_count, last_check_at, last_online_at, created_at FROM nodes WHERE ip = ?", ip,
+	).Scan(&n.Name, &n.Pool, &n.IP, &n.Status, &n.FailCount, &n.LastCheckAt, &n.LastOnlineAt, &n.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	return n, err
+}
+
 func (s *Store) GetNode(name string) (*Node, error) {
 	n := &Node{}
 	err := s.db.QueryRow(
