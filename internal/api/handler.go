@@ -748,7 +748,7 @@ Description=AirPool Health Check Handler
 
 [Service]
 Type=oneshot
-ExecStart=/bin/sh -c 'echo ok'
+ExecStart=/bin/sh -c 'systemctl is-active --quiet hysteria-server && echo ok || exit 1'
 StandardInput=socket
 StandardOutput=socket
 HCEOF
