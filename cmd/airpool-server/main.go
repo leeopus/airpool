@@ -68,19 +68,24 @@ func main() {
 	mux := http.NewServeMux()
 	handler.Register(mux)
 
-	// Print subscribe URL
-	log.Printf("Subscribe URL: http://<IP>%s/api/subscribe?token=%s", cfg.Listen, cfg.SubscribeToken)
+	// Ensure TLS certificate exists
+	if err := config.EnsureTLSCert(cfg.TLSCert, cfg.TLSKey); err != nil {
+		log.Fatalf("tls cert: %v", err)
+	}
 
-	// Start HTTP server
+	// Print subscribe URL
+	log.Printf("Subscribe URL: https://<IP>%s/api/subscribe?token=%s", cfg.Listen, cfg.SubscribeToken)
+
+	// Start HTTPS server
 	server := &http.Server{
 		Addr:    cfg.Listen,
 		Handler: mux,
 	}
 
 	go func() {
-		log.Printf("listening on %s", cfg.Listen)
-		if err := server.ListenAndServe(); err != http.ErrServerClosed {
-			log.Fatalf("http: %v", err)
+		log.Printf("listening on %s (TLS)", cfg.Listen)
+		if err := server.ListenAndServeTLS(cfg.TLSCert, cfg.TLSKey); err != http.ErrServerClosed {
+			log.Fatalf("https: %v", err)
 		}
 	}()
 

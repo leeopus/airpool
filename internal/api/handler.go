@@ -460,7 +460,7 @@ const installScript = `#!/usr/bin/env bash
 set -euo pipefail
 
 # AirPool Node Installer
-# Usage: curl -sL http://CONFIG_CENTER/install.sh | bash -s -- --server IP:PORT --token TOKEN --pool POOL [--name NAME]
+# Usage: curl -skL https://CONFIG_CENTER/install.sh | bash -s -- --server IP:PORT --token TOKEN --pool POOL [--name NAME]
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -500,7 +500,7 @@ log "Node IP: $NODE_IP"
 
 # 1. Get Hysteria2 password from config center
 log "Fetching Hysteria2 password from config center..."
-HY2_PASS=$(curl -sf "http://${SERVER}/api/config?token=${TOKEN}" | grep -o '"hysteria2_password":"[^"]*"' | cut -d'"' -f4)
+HY2_PASS=$(curl -skf "https://${SERVER}/api/config?token=${TOKEN}" | grep -o '"hysteria2_password":"[^"]*"' | cut -d'"' -f4)
 [[ -z "$HY2_PASS" ]] && err "Failed to get Hysteria2 password from config center"
 
 # 2. Install Hysteria2
@@ -600,7 +600,7 @@ if [[ -n "$NAME" ]]; then
 fi
 REGISTER_DATA="${REGISTER_DATA}}"
 
-RESP=$(curl -sf -X POST "http://${SERVER}/api/nodes" \
+RESP=$(curl -skf -X POST "https://${SERVER}/api/nodes" \
     -H "Authorization: ${TOKEN}" \
     -H "Content-Type: application/json" \
     -d "$REGISTER_DATA") || err "Failed to register with config center"

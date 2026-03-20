@@ -1,11 +1,18 @@
 package config
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/hex"
+	"encoding/pem"
 	"fmt"
+	"math/big"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/BurntSushi/toml"
 )
@@ -13,6 +20,8 @@ import (
 type Config struct {
 	Listen            string `toml:"listen"`
 	DBPath            string `toml:"db_path"`
+	TLSCert           string `toml:"tls_cert"`
+	TLSKey            string `toml:"tls_key"`
 	APIToken          string `toml:"api_token"`
 	SubscribeToken    string `toml:"subscribe_token"`
 	Hysteria2Password string `toml:"hysteria2_password"`
@@ -26,8 +35,10 @@ type Config struct {
 
 func DefaultConfig() *Config {
 	return &Config{
-		Listen:           ":8080",
+		Listen:           ":8443",
 		DBPath:           "airpool.db",
+		TLSCert:          "server.crt",
+		TLSKey:           "server.key",
 		CheckInterval:    60,
 		CheckTimeout:     5,
 		OfflineThreshold: 3,
@@ -88,4 +99,48 @@ func generateToken(prefix string) string {
 	b := make([]byte, 16)
 	rand.Read(b)
 	return prefix + hex.EncodeToString(b)
+}
+
+// EnsureTLSCert generates a self-signed certificate if cert/key files don't exist.
+func EnsureTLSCert(certPath, keyPath string) error {
+	if _, err := os.Stat(certPath); err == nil {
+		return nil // already exists
+	}
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return fmt.Errorf("generate key: %w", err)
+	}
+
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "airpool"},
+		NotBefore:    time.Now(),
+		NotAfter:     time.Now().Add(10 * 365 * 24 * time.Hour),
+	}
+
+	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		return fmt.Errorf("create cert: %w", err)
+	}
+
+	certFile, err := os.Create(certPath)
+	if err != nil {
+		return err
+	}
+	defer certFile.Close()
+	pem.Encode(certFile, &pem.Block{Type: "CERTIFICATE", Bytes: certDER})
+
+	keyDER, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		return err
+	}
+	keyFile, err := os.Create(keyPath)
+	if err != nil {
+		return err
+	}
+	defer keyFile.Close()
+	pem.Encode(keyFile, &pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
+
+	return nil
 }

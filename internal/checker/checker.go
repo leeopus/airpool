@@ -1,9 +1,10 @@
 package checker
 
 import (
+	"crypto/tls"
 	"fmt"
 	"log"
-	"net"
+	"net/http"
 	"sync"
 	"time"
 
@@ -86,10 +87,16 @@ func (c *Checker) checkAll() {
 }
 
 func (c *Checker) checkNode(node store.Node) {
-	addr := fmt.Sprintf("%s:443", node.IP)
-	conn, err := net.DialTimeout("tcp", addr, c.timeout)
+	url := fmt.Sprintf("https://%s:443/", node.IP)
+	client := &http.Client{
+		Timeout: c.timeout,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		},
+	}
+	resp, err := client.Get(url)
 	if err == nil {
-		conn.Close()
+		resp.Body.Close()
 		c.handleSuccess(node)
 	} else {
 		c.handleFailure(node)
