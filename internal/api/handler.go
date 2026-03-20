@@ -18,13 +18,14 @@ import (
 )
 
 type Handler struct {
-	cfg       *config.Config
-	store     *store.Store
-	generator *subscribe.Generator
+	cfg        *config.Config
+	cfgPath    string
+	store      *store.Store
+	generator  *subscribe.Generator
 }
 
-func New(cfg *config.Config, s *store.Store, gen *subscribe.Generator) *Handler {
-	return &Handler{cfg: cfg, store: s, generator: gen}
+func New(cfg *config.Config, cfgPath string, s *store.Store, gen *subscribe.Generator) *Handler {
+	return &Handler{cfg: cfg, cfgPath: cfgPath, store: s, generator: gen}
 }
 
 func (h *Handler) Register(mux *http.ServeMux) {
@@ -35,6 +36,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/subscribe", h.handleSubscribe)
 	mux.HandleFunc("/api/config", h.handleConfig)
 	mux.HandleFunc("/api/events", h.handleEvents)
+	mux.HandleFunc("/api/tokens/regenerate", h.handleRegenerateToken)
 	mux.HandleFunc("/install.sh", h.handleInstallScript)
 	webFS, _ := fs.Sub(web.FS, ".")
 	mux.Handle("/", http.FileServer(http.FS(webFS)))
@@ -345,6 +347,55 @@ func (h *Handler) handleConfig(w http.ResponseWriter, r *http.Request) {
 			"hysteria2_password": h.cfg.Hysteria2Password,
 			"subscribe_token":   h.cfg.SubscribeToken,
 		})
+	})
+}
+
+// --- Token Regeneration ---
+
+func (h *Handler) handleRegenerateToken(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	h.requireAPIToken(w, r, func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Target string `json:"target"` // "api_token", "subscribe_token", or "hysteria2_password"
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			jsonError(w, "invalid json", http.StatusBadRequest)
+			return
+		}
+
+		var newVal string
+		switch req.Target {
+		case "api_token":
+			newVal = config.GenerateToken("ak_")
+			h.cfg.APIToken = newVal
+		case "subscribe_token":
+			newVal = config.GenerateToken("st_")
+			h.cfg.SubscribeToken = newVal
+		case "hysteria2_password":
+			newVal = config.GenerateToken("hp_")
+			h.cfg.Hysteria2Password = newVal
+		default:
+			jsonError(w, "target must be one of: api_token, subscribe_token, hysteria2_password", http.StatusBadRequest)
+			return
+		}
+
+		if err := config.Save(h.cfgPath, h.cfg); err != nil {
+			jsonError(w, "save config: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		log.Printf("[api] token regenerated: %s", req.Target)
+		resp := map[string]string{"status": "ok", "target": req.Target, "new_value": newVal}
+		if req.Target == "api_token" {
+			resp["warning"] = "API Token changed. Use the new token for all future requests."
+		}
+		if req.Target == "hysteria2_password" {
+			resp["warning"] = "Hysteria2 password changed. All nodes must be redeployed with the new password."
+		}
+		jsonOK(w, resp)
 	})
 }
 

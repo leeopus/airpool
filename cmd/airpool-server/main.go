@@ -64,7 +64,7 @@ func main() {
 	defer chk.Stop()
 
 	// Init API handler
-	handler := api.New(cfg, s, gen)
+	handler := api.New(cfg, *configPath, s, gen)
 	mux := http.NewServeMux()
 	handler.Register(mux)
 

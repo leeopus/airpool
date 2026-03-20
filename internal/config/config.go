@@ -62,6 +62,16 @@ func Load(path string) (*Config, error) {
 	return cfg, nil
 }
 
+// GenerateToken creates a new random token with the given prefix.
+func GenerateToken(prefix string) string {
+	return generateToken(prefix)
+}
+
+// Save writes the config to disk.
+func Save(path string, cfg *Config) error {
+	return save(path, cfg)
+}
+
 func save(path string, cfg *Config) error {
 	if dir := filepath.Dir(path); dir != "." {
 		os.MkdirAll(dir, 0755)
