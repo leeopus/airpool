@@ -1,0 +1,750 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AirPool</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --bg:#0f1117;--surface:#1a1d27;--surface2:#252836;--surface3:#2e3148;
+  --border:#363a52;--accent:#6c63ff;--accent-dim:#6c63ff22;--accent2:#00d4aa;
+  --text:#e2e8f0;--text-muted:#8892a4;--text-dim:#5a6478;
+  --online:#22c55e;--offline:#ef4444;--pending:#f59e0b;
+  --radius:10px;--radius-sm:6px;
+}
+html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--text);font-size:14px}
+a{color:var(--accent);text-decoration:none}
+button{font-family:inherit;cursor:pointer;border:none;font-size:13px}
+input,select,textarea{font-family:inherit;font-size:13px;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:var(--radius-sm);padding:8px 12px;outline:none;transition:border .2s}
+input:focus,select:focus,textarea:focus{border-color:var(--accent)}
+
+#auth-overlay{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:var(--bg);z-index:1000}
+.auth-box{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:48px;width:380px;text-align:center}
+.auth-box h1{font-size:28px;margin-bottom:6px;font-weight:700;letter-spacing:-0.5px}
+.auth-box p{color:var(--text-muted);margin-bottom:28px;font-size:13px}
+.auth-box input{width:100%;margin-bottom:12px}
+.auth-box .err{color:var(--offline);font-size:12px;margin-bottom:8px;min-height:18px}
+.auth-box button{width:100%;padding:10px;background:var(--accent);color:#fff;border-radius:var(--radius-sm);font-weight:600;font-size:14px;transition:opacity .2s}
+.auth-box button:hover{opacity:.85}
+
+#app{display:none;height:100vh}
+.layout{display:flex;height:100%}
+#sidebar{width:220px;background:var(--surface);border-right:1px solid var(--border);padding:20px 0;display:flex;flex-direction:column;flex-shrink:0}
+.logo{padding:0 24px 24px;font-size:20px;font-weight:700;letter-spacing:-0.5px;display:flex;align-items:center;gap:10px}
+.logo svg{width:26px;height:26px}
+.nav{flex:1}
+.nav-item{display:flex;align-items:center;gap:12px;padding:10px 24px;color:var(--text-muted);cursor:pointer;transition:all .15s;font-size:13px;font-weight:500;border-left:3px solid transparent;margin-bottom:2px}
+.nav-item:hover{color:var(--text);background:var(--surface2)}
+.nav-item.active{color:var(--accent);background:var(--accent-dim);border-left-color:var(--accent)}
+.nav-item svg{width:18px;height:18px;opacity:.7}
+.nav-item.active svg{opacity:1}
+.sidebar-footer{padding:12px 24px;border-top:1px solid var(--border);color:var(--text-dim);font-size:11px}
+
+#main{flex:1;overflow-y:auto;padding:32px}
+.pane{display:none}
+.pane.active{display:block}
+.page-title{font-size:22px;font-weight:700;margin-bottom:24px;letter-spacing:-0.3px}
+
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px;margin-bottom:28px}
+.stat-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:20px}
+.stat-card .label{font-size:12px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px}
+.stat-card .value{font-size:28px;font-weight:700;letter-spacing:-1px}
+.stat-card .value.green{color:var(--online)}
+.stat-card .value.red{color:var(--offline)}
+.stat-card .value.purple{color:var(--accent)}
+
+.tbl-wrap{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
+table{width:100%;border-collapse:collapse}
+th{text-align:left;padding:12px 16px;font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;background:var(--surface2);font-weight:600}
+td{padding:12px 16px;border-top:1px solid var(--border);font-size:13px}
+tr:hover td{background:var(--surface2)}
+.empty-row td{text-align:center;color:var(--text-dim);padding:32px}
+
+.badge{display:inline-block;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:600}
+.badge-online{background:#22c55e22;color:var(--online)}
+.badge-offline{background:#ef444422;color:var(--offline)}
+.badge-pending{background:#f59e0b22;color:var(--pending)}
+.badge-event{background:var(--accent-dim);color:var(--accent)}
+
+.btn{display:inline-flex;align-items:center;gap:6px;padding:6px 14px;border-radius:var(--radius-sm);font-weight:500;transition:all .15s}
+.btn-primary{background:var(--accent);color:#fff}
+.btn-primary:hover{opacity:.85}
+.btn-ghost{background:transparent;color:var(--text-muted);border:1px solid var(--border)}
+.btn-ghost:hover{color:var(--text);border-color:var(--text-muted)}
+.btn-danger{background:transparent;color:var(--offline);border:1px solid #ef444444}
+.btn-danger:hover{background:#ef444422}
+.btn-sm{padding:4px 10px;font-size:12px}
+.toolbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}
+
+.modal-overlay{position:fixed;inset:0;background:#00000088;display:flex;align-items:center;justify-content:center;z-index:500;opacity:0;pointer-events:none;transition:opacity .2s}
+.modal-overlay.show{opacity:1;pointer-events:all}
+.modal{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:28px;width:400px;max-width:90vw}
+.modal h3{font-size:16px;margin-bottom:20px;font-weight:600}
+.modal label{display:block;font-size:12px;color:var(--text-muted);margin-bottom:4px;margin-top:14px}
+.modal label:first-of-type{margin-top:0}
+.modal input,.modal select,.modal textarea{width:100%}
+.modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:24px}
+
+#toast-container{position:fixed;top:20px;right:20px;z-index:2000;display:flex;flex-direction:column;gap:8px}
+.toast{padding:12px 20px;border-radius:var(--radius-sm);font-size:13px;font-weight:500;animation:slideIn .25s;min-width:200px}
+.toast-ok{background:#22c55e;color:#fff}
+.toast-err{background:var(--offline);color:#fff}
+@keyframes slideIn{from{opacity:0;transform:translateX(30px)}to{opacity:1;transform:none}}
+
+.pool-section{margin-bottom:24px}
+.pool-header{display:flex;align-items:center;gap:10px;margin-bottom:10px;font-size:15px;font-weight:600}
+.pool-header .count{font-size:12px;color:var(--text-muted);font-weight:400}
+
+.code-block{background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:16px;font-family:'SF Mono',Consolas,monospace;font-size:12px;line-height:1.6;overflow-x:auto;position:relative;white-space:pre-wrap;word-break:break-all}
+.copy-btn{position:absolute;top:8px;right:8px;padding:4px 10px;background:var(--surface);border:1px solid var(--border);color:var(--text-muted);border-radius:4px;font-size:11px;cursor:pointer}
+.copy-btn:hover{color:var(--text)}
+
+.setting-group{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:24px;margin-bottom:20px}
+.setting-group h3{font-size:14px;font-weight:600;margin-bottom:16px}
+.setting-row{display:flex;align-items:center;gap:12px;margin-bottom:12px}
+.setting-row label{min-width:80px;font-size:12px;color:var(--text-muted)}
+.setting-row .val{flex:1;font-family:monospace;font-size:13px;color:var(--accent2);word-break:break-all}
+
+@media(max-width:768px){
+  #sidebar{width:60px;padding:12px 0}
+  .logo span,.nav-item span,.sidebar-footer{display:none}
+  .nav-item{justify-content:center;padding:12px}
+  .logo{padding:0 0 16px;justify-content:center}
+  #main{padding:20px 16px}
+  .stats{grid-template-columns:repeat(2,1fr)}
+}
+</style>
+</head>
+<body>
+
+<div id="auth-overlay">
+  <div class="auth-box">
+    <h1>AirPool</h1>
+    <p>输入 API Token 登录管理面板</p>
+    <div class="err" id="auth-err"></div>
+    <input type="password" id="auth-input" placeholder="ak_xxxxxxxx" autofocus>
+    <button id="login-btn">登 录</button>
+  </div>
+</div>
+
+<div id="app">
+  <div class="layout">
+    <div id="sidebar">
+      <div class="logo">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+        <span>AirPool</span>
+      </div>
+      <div class="nav" id="nav-container"></div>
+      <div class="sidebar-footer">v1.0</div>
+    </div>
+    <div id="main">
+      <div class="pane active" id="pane-dashboard"></div>
+      <div class="pane" id="pane-pools"></div>
+      <div class="pane" id="pane-nodes"></div>
+      <div class="pane" id="pane-events"></div>
+      <div class="pane" id="pane-settings"></div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modal-overlay">
+  <div class="modal" id="modal-content"></div>
+</div>
+
+<div id="toast-container"></div>
+
+<script>
+(function() {
+'use strict';
+
+// ─── Escape helper (prevents XSS) ──────────────
+var escDiv = document.createElement('div');
+function esc(s) { escDiv.textContent = s || ''; return escDiv.innerHTML; }
+
+// ─── API ────────────────────────────────────────
+var apiToken = null;
+
+function apiReq(method, path, body) {
+  var opts = { method: method, headers: { 'Authorization': apiToken || '' } };
+  if (body) { opts.headers['Content-Type'] = 'application/json'; opts.body = JSON.stringify(body); }
+  return fetch(path, opts).then(function(r) {
+    if (r.status === 401) { doLogout(); throw new Error('unauthorized'); }
+    return r.json().catch(function() { return null; }).then(function(data) {
+      if (!r.ok) throw new Error((data && data.error) || 'HTTP ' + r.status);
+      return data;
+    });
+  });
+}
+
+// ─── State ──────────────────────────────────────
+var S = { pools: [], nodes: [], events: [], config: {} };
+
+function refresh() {
+  return Promise.all([
+    apiReq('GET', '/api/pools'),
+    apiReq('GET', '/api/nodes'),
+    apiReq('GET', '/api/events'),
+    apiReq('GET', '/api/config'),
+  ]).then(function(results) {
+    S.pools = results[0] || [];
+    S.nodes = results[1] || [];
+    S.events = results[2] || [];
+    S.config = results[3] || {};
+  });
+}
+
+// ─── Helpers ────────────────────────────────────
+function fmtTime(u) {
+  if (!u) return '\u2014';
+  return new Date(u * 1000).toLocaleString('zh-CN', { month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', second:'2-digit' });
+}
+function fmtRel(u) {
+  if (!u) return '\u2014';
+  var d = Math.floor(Date.now()/1000 - u);
+  if (d < 60) return d + '\u79d2\u524d';
+  if (d < 3600) return Math.floor(d/60) + '\u5206\u949f\u524d';
+  if (d < 86400) return Math.floor(d/3600) + '\u5c0f\u65f6\u524d';
+  return Math.floor(d/86400) + '\u5929\u524d';
+}
+function statusBadge(s) {
+  var cls = { online:'badge-online', offline:'badge-offline', pending:'badge-pending', disabled:'badge-offline' };
+  return '<span class="badge ' + (cls[s] || 'badge-pending') + '">' + esc(s) + '</span>';
+}
+function nodesByPool() {
+  var m = {};
+  S.nodes.forEach(function(n) { if (!m[n.pool]) m[n.pool] = []; m[n.pool].push(n); });
+  return m;
+}
+var poolIcons = {us:'\ud83c\uddfa\ud83c\uddf8',jp:'\ud83c\uddef\ud83c\uddf5',hk:'\ud83c\udded\ud83c\uddf0',sg:'\ud83c\uddf8\ud83c\uddec',tw:'\ud83c\uddf9\ud83c\uddfc',kr:'\ud83c\uddf0\ud83c\uddf7',uk:'\ud83c\uddec\ud83c\udde7',de:'\ud83c\udde9\ud83c\uddea',premium:'\ud83d\udc8e',standard:'\ud83d\udce6',backup:'\ud83d\udd04'};
+function poolIcon(p) { return poolIcons[p] || '\ud83d\udce1'; }
+
+// ─── Toast ──────────────────────────────────────
+function toast(msg, ok) {
+  if (ok === undefined) ok = true;
+  var el = document.createElement('div');
+  el.className = 'toast ' + (ok ? 'toast-ok' : 'toast-err');
+  el.textContent = msg;
+  document.getElementById('toast-container').appendChild(el);
+  setTimeout(function() { el.remove(); }, 3000);
+}
+
+// ─── Modal (builds DOM safely) ──────────────────
+var modalOpen = false;
+
+function showModalEl(el) {
+  var mc = document.getElementById('modal-content');
+  mc.textContent = '';
+  mc.appendChild(el);
+  document.getElementById('modal-overlay').classList.add('show');
+  modalOpen = true;
+}
+function closeModal() {
+  document.getElementById('modal-overlay').classList.remove('show');
+  modalOpen = false;
+}
+document.getElementById('modal-overlay').addEventListener('click', function(e) {
+  if (e.target === this) closeModal();
+});
+
+// ─── Safe DOM builder helpers ───────────────────
+function h(tag, attrs, children) {
+  var el = document.createElement(tag);
+  if (attrs) Object.keys(attrs).forEach(function(k) {
+    if (k === 'className') el.className = attrs[k];
+    else if (k === 'textContent') el.textContent = attrs[k];
+    else if (k.indexOf('on') === 0) el.addEventListener(k.slice(2).toLowerCase(), attrs[k]);
+    else el.setAttribute(k, attrs[k]);
+  });
+  if (typeof children === 'string') el.textContent = children;
+  else if (Array.isArray(children)) children.forEach(function(c) { if (c) el.appendChild(typeof c === 'string' ? document.createTextNode(c) : c); });
+  return el;
+}
+
+// ─── Renderers (safe DOM manipulation) ──────────
+function renderDashboard() {
+  var pane = document.getElementById('pane-dashboard');
+  pane.textContent = '';
+  var total = S.nodes.length;
+  var online = S.nodes.filter(function(n){return n.status==='online'}).length;
+  var offline = S.nodes.filter(function(n){return n.status==='offline'}).length;
+  var bp = nodesByPool();
+
+  pane.appendChild(h('div', {className:'page-title'}, '\u4eea\u8868\u76d8'));
+
+  var stats = h('div', {className:'stats'});
+  [['\u8282\u70b9\u603b\u6570', total, 'purple'],['\u5728\u7ebf', online, 'green'],['\u79bb\u7ebf', offline, 'red'],['\u6c60\u6570\u91cf', S.pools.length, '']].forEach(function(item) {
+    var card = h('div', {className:'stat-card'});
+    card.appendChild(h('div', {className:'label'}, item[0]));
+    card.appendChild(h('div', {className:'value' + (item[2] ? ' '+item[2] : '')}, String(item[1])));
+    stats.appendChild(card);
+  });
+  pane.appendChild(stats);
+
+  var wrap = h('div', {className:'tbl-wrap'});
+  var tbl = h('table');
+  var thead = h('tr');
+  ['\u6c60','\u63cf\u8ff0','\u5728\u7ebf / \u603b\u6570'].forEach(function(t) { thead.appendChild(h('th', null, t)); });
+  tbl.appendChild(thead);
+
+  if (S.pools.length === 0) {
+    var er = h('tr', {className:'empty-row'});
+    er.appendChild(h('td', {colspan:'3'}, '\u6682\u65e0\u6c60'));
+    tbl.appendChild(er);
+  } else {
+    S.pools.forEach(function(p) {
+      var ns = bp[p.name] || [];
+      var on = ns.filter(function(n){return n.status==='online'}).length;
+      var tr = h('tr');
+      tr.appendChild(h('td', null, poolIcon(p.name) + ' ' + p.name));
+      tr.appendChild(h('td', null, p.description));
+      tr.appendChild(h('td', null, on + ' / ' + ns.length));
+      tbl.appendChild(tr);
+    });
+  }
+  wrap.appendChild(tbl);
+  pane.appendChild(wrap);
+}
+
+function renderPools() {
+  var pane = document.getElementById('pane-pools');
+  pane.textContent = '';
+  var bp = nodesByPool();
+
+  var toolbar = h('div', {className:'toolbar'});
+  toolbar.appendChild(h('div', {className:'page-title', style:'margin:0'}, '\u6c60\u7ba1\u7406'));
+  toolbar.appendChild(h('button', {className:'btn btn-primary', onClick: createPoolModal}, '+ \u65b0\u5efa\u6c60'));
+  pane.appendChild(toolbar);
+
+  var wrap = h('div', {className:'tbl-wrap'});
+  var tbl = h('table');
+  var thead = h('tr');
+  ['\u540d\u79f0','\u63cf\u8ff0','\u8282\u70b9\u6570','\u521b\u5efa\u65f6\u95f4','\u64cd\u4f5c'].forEach(function(t) { thead.appendChild(h('th', null, t)); });
+  tbl.appendChild(thead);
+
+  if (S.pools.length === 0) {
+    var er = h('tr', {className:'empty-row'});
+    er.appendChild(h('td', {colspan:'5'}, '\u6682\u65e0\u6c60\uff0c\u70b9\u51fb\u53f3\u4e0a\u89d2\u521b\u5efa'));
+    tbl.appendChild(er);
+  } else {
+    S.pools.forEach(function(p) {
+      var cnt = (bp[p.name]||[]).length;
+      var tr = h('tr');
+      var nameTd = h('td');
+      nameTd.appendChild(document.createTextNode(poolIcon(p.name) + ' '));
+      nameTd.appendChild(h('strong', null, p.name));
+      tr.appendChild(nameTd);
+      tr.appendChild(h('td', null, p.description));
+      tr.appendChild(h('td', null, String(cnt)));
+      tr.appendChild(h('td', null, fmtTime(p.created_at)));
+      var actTd = h('td');
+      actTd.appendChild(h('button', {className:'btn btn-ghost btn-sm', onClick: (function(pp){return function(){editPoolModal(pp.name, pp.description)}})(p)}, '\u7f16\u8f91'));
+      actTd.appendChild(document.createTextNode(' '));
+      actTd.appendChild(h('button', {className:'btn btn-danger btn-sm', onClick: (function(pp){return function(){deletePool(pp.name)}})(p)}, '\u5220\u9664'));
+      tr.appendChild(actTd);
+      tbl.appendChild(tr);
+    });
+  }
+  wrap.appendChild(tbl);
+  pane.appendChild(wrap);
+}
+
+function renderNodes() {
+  var pane = document.getElementById('pane-nodes');
+  pane.textContent = '';
+  var bp = nodesByPool();
+
+  var toolbar = h('div', {className:'toolbar'});
+  toolbar.appendChild(h('div', {className:'page-title', style:'margin:0'}, '\u8282\u70b9\u7ba1\u7406'));
+  pane.appendChild(toolbar);
+
+  var poolNames = S.pools.map(function(p){return p.name});
+  S.nodes.forEach(function(n) { if (poolNames.indexOf(n.pool) === -1) poolNames.push(n.pool); });
+
+  if (S.nodes.length === 0) {
+    var wrap = h('div', {className:'tbl-wrap'});
+    var tbl = h('table');
+    var er = h('tr', {className:'empty-row'});
+    er.appendChild(h('td', null, '\u6682\u65e0\u8282\u70b9'));
+    tbl.appendChild(er);
+    wrap.appendChild(tbl);
+    pane.appendChild(wrap);
+    return;
+  }
+
+  poolNames.forEach(function(pn) {
+    var ns = bp[pn];
+    if (!ns || ns.length === 0) return;
+    var on = ns.filter(function(n){return n.status==='online'}).length;
+
+    var section = h('div', {className:'pool-section'});
+    var header = h('div', {className:'pool-header'});
+    header.appendChild(document.createTextNode(poolIcon(pn) + ' ' + pn + ' '));
+    header.appendChild(h('span', {className:'count'}, on + '/' + ns.length + ' \u5728\u7ebf'));
+    section.appendChild(header);
+
+    var wrap = h('div', {className:'tbl-wrap'});
+    var tbl = h('table');
+    var thead = h('tr');
+    ['\u540d\u79f0','IP','\u72b6\u6001','\u5931\u8d25\u6b21\u6570','\u6700\u540e\u68c0\u67e5','\u64cd\u4f5c'].forEach(function(t) { thead.appendChild(h('th', null, t)); });
+    tbl.appendChild(thead);
+
+    ns.forEach(function(n) {
+      var tr = h('tr');
+      var nameTd = h('td');
+      nameTd.appendChild(h('strong', null, n.name));
+      tr.appendChild(nameTd);
+
+      var ipTd = h('td', {style:'font-family:monospace;font-size:12px'}, n.ip);
+      tr.appendChild(ipTd);
+
+      var statusTd = h('td');
+      var badgeSpan = h('span', {className:'badge ' + ({online:'badge-online',offline:'badge-offline',pending:'badge-pending',disabled:'badge-offline'}[n.status] || 'badge-pending')}, n.status);
+      statusTd.appendChild(badgeSpan);
+      tr.appendChild(statusTd);
+
+      tr.appendChild(h('td', null, String(n.fail_count || 0)));
+      tr.appendChild(h('td', {style:'color:var(--text-muted)'}, fmtRel(n.last_check_at)));
+
+      var actTd = h('td', {style:'white-space:nowrap'});
+      if (n.status === 'online') {
+        actTd.appendChild(h('button', {className:'btn btn-ghost btn-sm', onClick:(function(nn){return function(){setNodeStatus(nn.name,'offline')}})(n)}, '\u4e0b\u7ebf'));
+      } else {
+        actTd.appendChild(h('button', {className:'btn btn-ghost btn-sm', onClick:(function(nn){return function(){setNodeStatus(nn.name,'online')}})(n)}, '\u4e0a\u7ebf'));
+      }
+      actTd.appendChild(document.createTextNode(' '));
+      actTd.appendChild(h('button', {className:'btn btn-ghost btn-sm', onClick:(function(nn){return function(){moveNodeModal(nn.name,nn.pool)}})(n)}, '\u8fc1\u79fb'));
+      actTd.appendChild(document.createTextNode(' '));
+      actTd.appendChild(h('button', {className:'btn btn-danger btn-sm', onClick:(function(nn){return function(){deleteNode(nn.name)}})(n)}, '\u5220\u9664'));
+      tr.appendChild(actTd);
+      tbl.appendChild(tr);
+    });
+
+    wrap.appendChild(tbl);
+    section.appendChild(wrap);
+    pane.appendChild(section);
+  });
+}
+
+function renderEvents() {
+  var pane = document.getElementById('pane-events');
+  pane.textContent = '';
+  pane.appendChild(h('div', {className:'page-title'}, '\u4e8b\u4ef6\u65e5\u5fd7'));
+
+  var wrap = h('div', {className:'tbl-wrap'});
+  var tbl = h('table');
+  var thead = h('tr');
+  ['\u65f6\u95f4','\u8282\u70b9','\u4e8b\u4ef6','\u8be6\u60c5'].forEach(function(t) { thead.appendChild(h('th', null, t)); });
+  tbl.appendChild(thead);
+
+  if (S.events.length === 0) {
+    var er = h('tr', {className:'empty-row'});
+    er.appendChild(h('td', {colspan:'4'}, '\u6682\u65e0\u4e8b\u4ef6'));
+    tbl.appendChild(er);
+  } else {
+    S.events.forEach(function(e) {
+      var badgeCls = e.event_type === 'online' ? 'badge-online' : e.event_type === 'offline' ? 'badge-offline' : 'badge-event';
+      var tr = h('tr');
+      tr.appendChild(h('td', {style:'color:var(--text-muted)'}, fmtTime(e.created_at)));
+      var ntd = h('td');
+      ntd.appendChild(h('strong', null, e.node_name));
+      tr.appendChild(ntd);
+      var etd = h('td');
+      etd.appendChild(h('span', {className:'badge ' + badgeCls}, e.event_type));
+      tr.appendChild(etd);
+      tr.appendChild(h('td', {style:'color:var(--text-muted)'}, e.detail));
+      tbl.appendChild(tr);
+    });
+  }
+  wrap.appendChild(tbl);
+  pane.appendChild(wrap);
+}
+
+function renderSettings() {
+  var pane = document.getElementById('pane-settings');
+  pane.textContent = '';
+  var host = location.host;
+  var subToken = (S.config && S.config.subscribe_token) || 'st_xxxxxxxx';
+  var subURL = location.protocol + '//' + host + '/api/subscribe?token=' + subToken;
+  var hy2Pass = (S.config && S.config.hysteria2_password) || '\u2014';
+
+  pane.appendChild(h('div', {className:'page-title'}, '\u8bbe\u7f6e'));
+
+  // Subscribe URL section
+  var g1 = h('div', {className:'setting-group'});
+  g1.appendChild(h('h3', null, '\ud83d\udce1 \u8ba2\u9605\u5730\u5740'));
+  g1.appendChild(h('p', {style:'color:var(--text-muted);font-size:12px;margin-bottom:12px'}, '\u5c06\u6b64 URL \u5bfc\u5165 Clash Verge / Shadowrocket / FlClash \u7b49\u5ba2\u6237\u7aef'));
+  var codeBlock1 = h('div', {className:'code-block', id:'sub-url'});
+  codeBlock1.appendChild(document.createTextNode(subURL));
+  var cpBtn1 = h('button', {className:'copy-btn', onClick: function(){copyElText('sub-url')}}, '\u590d\u5236');
+  codeBlock1.appendChild(cpBtn1);
+  g1.appendChild(codeBlock1);
+  pane.appendChild(g1);
+
+  // Deploy command section
+  var g2 = h('div', {className:'setting-group'});
+  g2.appendChild(h('h3', null, '\ud83d\ude80 \u8282\u70b9\u90e8\u7f72\u547d\u4ee4'));
+  g2.appendChild(h('p', {style:'color:var(--text-muted);font-size:12px;margin-bottom:12px'}, '\u5728\u65b0\u670d\u52a1\u5668\u4e0a\u6267\u884c\u6b64\u547d\u4ee4\uff0c\u4e00\u952e\u90e8\u7f72\u8282\u70b9'));
+
+  var selDiv = h('div', {style:'margin-bottom:12px'});
+  selDiv.appendChild(h('label', {style:'font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px'}, '\u9009\u62e9\u76ee\u6807\u6c60'));
+  var sel = h('select', {id:'deploy-pool', style:'width:200px'});
+  sel.appendChild(h('option', {value:''}, '-- \u9009\u62e9\u6c60 --'));
+  S.pools.forEach(function(p) { sel.appendChild(h('option', {value:p.name}, p.name)); });
+  sel.addEventListener('change', updateDeployCmd);
+  selDiv.appendChild(sel);
+  g2.appendChild(selDiv);
+
+  var codeBlock2 = h('div', {className:'code-block', id:'deploy-cmd', style:'color:var(--text-dim)'});
+  codeBlock2.textContent = '\u8bf7\u5148\u9009\u62e9\u76ee\u6807\u6c60';
+  g2.appendChild(codeBlock2);
+  pane.appendChild(g2);
+
+  // Token info section
+  var g3 = h('div', {className:'setting-group'});
+  g3.appendChild(h('h3', null, '\ud83d\udd11 Token \u4fe1\u606f'));
+  [['API Token', apiToken], ['Subscribe', subToken], ['Hy2 \u5bc6\u7801', hy2Pass]].forEach(function(item) {
+    var row = h('div', {className:'setting-row'});
+    row.appendChild(h('label', null, item[0]));
+    row.appendChild(h('div', {className:'val'}, item[1]));
+    g3.appendChild(row);
+  });
+  pane.appendChild(g3);
+
+  // Logout section
+  var g4 = h('div', {className:'setting-group'});
+  g4.appendChild(h('h3', null, '\u2699\ufe0f \u7ba1\u7406\u64cd\u4f5c'));
+  g4.appendChild(h('button', {className:'btn btn-ghost', style:'margin-top:4px', onClick: doLogout}, '\u9000\u51fa\u767b\u5f55'));
+  pane.appendChild(g4);
+}
+
+// ─── Actions ────────────────────────────────────
+function createPoolModal() {
+  var frag = document.createDocumentFragment();
+  frag.appendChild(h('h3', null, '\u65b0\u5efa\u6c60'));
+
+  var lbl1 = h('label', null, '\u540d\u79f0');
+  frag.appendChild(lbl1);
+  var inp1 = h('input', {id:'m-pool-name', placeholder:'us'});
+  frag.appendChild(inp1);
+
+  var lbl2 = h('label', null, '\u63cf\u8ff0');
+  frag.appendChild(lbl2);
+  var inp2 = h('input', {id:'m-pool-desc', placeholder:'\u7f8e\u56fd\u8282\u70b9'});
+  frag.appendChild(inp2);
+
+  var actions = h('div', {className:'modal-actions'});
+  actions.appendChild(h('button', {className:'btn btn-ghost', onClick: closeModal}, '\u53d6\u6d88'));
+  actions.appendChild(h('button', {className:'btn btn-primary', onClick: doCreatePool}, '\u521b\u5efa'));
+  frag.appendChild(actions);
+
+  var container = h('div');
+  container.appendChild(frag);
+  showModalEl(container);
+  setTimeout(function(){ document.getElementById('m-pool-name').focus(); }, 100);
+}
+
+function doCreatePool() {
+  var name = document.getElementById('m-pool-name').value.trim();
+  var desc = document.getElementById('m-pool-desc').value.trim();
+  if (!name) { toast('\u8bf7\u8f93\u5165\u6c60\u540d\u79f0', false); return; }
+  apiReq('POST', '/api/pools', { name: name, description: desc })
+    .then(function() { closeModal(); toast('\u6c60\u521b\u5efa\u6210\u529f'); return refresh(); })
+    .then(renderActive)
+    .catch(function(e) { toast(e.message, false); });
+}
+
+function editPoolModal(name, desc) {
+  var frag = document.createDocumentFragment();
+  frag.appendChild(h('h3', null, '\u7f16\u8f91\u6c60: ' + name));
+  frag.appendChild(h('label', null, '\u63cf\u8ff0'));
+  frag.appendChild(h('input', {id:'m-pool-desc', value: desc}));
+  var actions = h('div', {className:'modal-actions'});
+  actions.appendChild(h('button', {className:'btn btn-ghost', onClick: closeModal}, '\u53d6\u6d88'));
+  actions.appendChild(h('button', {className:'btn btn-primary', onClick: function(){doUpdatePool(name)}}, '\u4fdd\u5b58'));
+  frag.appendChild(actions);
+  var container = h('div');
+  container.appendChild(frag);
+  showModalEl(container);
+  setTimeout(function(){ document.getElementById('m-pool-desc').focus(); }, 100);
+}
+
+function doUpdatePool(name) {
+  var desc = document.getElementById('m-pool-desc').value.trim();
+  apiReq('PUT', '/api/pools/' + encodeURIComponent(name), { description: desc })
+    .then(function() { closeModal(); toast('\u5df2\u66f4\u65b0'); return refresh(); })
+    .then(renderActive)
+    .catch(function(e) { toast(e.message, false); });
+}
+
+function deletePool(name) {
+  if (!confirm('\u786e\u5b9a\u5220\u9664\u6c60 "' + name + '"\uff1f')) return;
+  apiReq('DELETE', '/api/pools/' + encodeURIComponent(name))
+    .then(function() { toast('\u6c60\u5df2\u5220\u9664'); return refresh(); })
+    .then(renderActive)
+    .catch(function(e) { toast(e.message, false); });
+}
+
+function setNodeStatus(name, status) {
+  apiReq('PUT', '/api/nodes/' + encodeURIComponent(name) + '/' + status)
+    .then(function() { toast(name + ' \u2192 ' + status); return refresh(); })
+    .then(renderActive)
+    .catch(function(e) { toast(e.message, false); });
+}
+
+function deleteNode(name) {
+  if (!confirm('\u786e\u5b9a\u5220\u9664\u8282\u70b9 "' + name + '"\uff1f')) return;
+  apiReq('DELETE', '/api/nodes/' + encodeURIComponent(name))
+    .then(function() { toast('\u8282\u70b9\u5df2\u5220\u9664'); return refresh(); })
+    .then(renderActive)
+    .catch(function(e) { toast(e.message, false); });
+}
+
+function moveNodeModal(name, currentPool) {
+  var frag = document.createDocumentFragment();
+  frag.appendChild(h('h3', null, '\u8fc1\u79fb\u8282\u70b9: ' + name));
+
+  var lbl1 = h('label');
+  lbl1.appendChild(document.createTextNode('\u5f53\u524d\u6c60: '));
+  lbl1.appendChild(h('strong', null, currentPool));
+  frag.appendChild(lbl1);
+  frag.appendChild(h('label', null, '\u76ee\u6807\u6c60'));
+
+  var sel = h('select', {id:'m-target-pool'});
+  S.pools.filter(function(p){return p.name !== currentPool}).forEach(function(p) {
+    sel.appendChild(h('option', {value: p.name}, poolIcon(p.name) + ' ' + p.name));
+  });
+  if (sel.children.length === 0) sel.appendChild(h('option', {disabled:'true'}, '\u65e0\u5176\u4ed6\u6c60'));
+  frag.appendChild(sel);
+
+  var actions = h('div', {className:'modal-actions'});
+  actions.appendChild(h('button', {className:'btn btn-ghost', onClick: closeModal}, '\u53d6\u6d88'));
+  actions.appendChild(h('button', {className:'btn btn-primary', onClick: function(){doMoveNode(name)}}, '\u8fc1\u79fb'));
+  frag.appendChild(actions);
+
+  var container = h('div');
+  container.appendChild(frag);
+  showModalEl(container);
+}
+
+function doMoveNode(name) {
+  var pool = document.getElementById('m-target-pool').value;
+  if (!pool) { toast('\u8bf7\u9009\u62e9\u76ee\u6807\u6c60', false); return; }
+  apiReq('PUT', '/api/nodes/' + encodeURIComponent(name) + '/pool', { pool: pool })
+    .then(function() { closeModal(); toast(name + ' \u2192 ' + pool); return refresh(); })
+    .then(renderActive)
+    .catch(function(e) { toast(e.message, false); });
+}
+
+function updateDeployCmd() {
+  var pool = document.getElementById('deploy-pool').value;
+  var el = document.getElementById('deploy-cmd');
+  el.textContent = '';
+  if (!pool) {
+    el.style.color = 'var(--text-dim)';
+    el.textContent = '\u8bf7\u5148\u9009\u62e9\u76ee\u6807\u6c60';
+    return;
+  }
+  el.style.color = '';
+  var host = location.host;
+  var cmd = 'curl -sL http://' + host + '/install.sh | bash -s -- \\\n  --server ' + host + ' \\\n  --token ' + apiToken + ' \\\n  --pool ' + pool;
+  el.appendChild(document.createTextNode(cmd));
+  var cpBtn = h('button', {className:'copy-btn', onClick: function(){copyElText('deploy-cmd')}}, '\u590d\u5236');
+  el.appendChild(cpBtn);
+}
+
+function copyElText(id) {
+  var el = document.getElementById(id);
+  var text = el.textContent.replace('\u590d\u5236', '').trim();
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(text).then(function() { toast('\u5df2\u590d\u5236'); });
+  }
+}
+
+// ─── Navigation ─────────────────────────────────
+var tabs = [
+  { id:'dashboard', label:'\u4eea\u8868\u76d8', icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>' },
+  { id:'pools', label:'\u6c60\u7ba1\u7406', icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>' },
+  { id:'nodes', label:'\u8282\u70b9\u7ba1\u7406', icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><circle cx="6" cy="6" r="1"/><circle cx="6" cy="18" r="1"/></svg>' },
+  { id:'events', label:'\u4e8b\u4ef6\u65e5\u5fd7', icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>' },
+  { id:'settings', label:'\u8bbe\u7f6e', icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>' },
+];
+
+var renderers = { dashboard: renderDashboard, pools: renderPools, nodes: renderNodes, events: renderEvents, settings: renderSettings };
+var navContainer = document.getElementById('nav-container');
+
+tabs.forEach(function(tab) {
+  var item = document.createElement('div');
+  item.className = 'nav-item' + (tab.id === 'dashboard' ? ' active' : '');
+  item.dataset.tab = tab.id;
+  // Icon via safe SVG insertion (these are static, trusted SVGs from our code)
+  var iconSpan = document.createElement('span');
+  iconSpan.innerHTML = tab.icon; // Safe: hardcoded SVG strings, no user input
+  item.appendChild(iconSpan.firstChild);
+  item.appendChild(h('span', null, tab.label));
+  item.addEventListener('click', function() { navigate(tab.id); });
+  navContainer.appendChild(item);
+});
+
+function navigate(tabId) {
+  document.querySelectorAll('.nav-item').forEach(function(el) {
+    el.classList.toggle('active', el.dataset.tab === tabId);
+  });
+  document.querySelectorAll('.pane').forEach(function(el) {
+    el.classList.toggle('active', el.id === 'pane-' + tabId);
+  });
+  renderers[tabId]();
+}
+
+function renderActive() {
+  var active = document.querySelector('.nav-item.active');
+  var tabId = active ? active.dataset.tab : 'dashboard';
+  renderers[tabId]();
+}
+
+// ─── Auth ───────────────────────────────────────
+document.getElementById('login-btn').addEventListener('click', doLogin);
+document.getElementById('auth-input').addEventListener('keydown', function(e) { if (e.key === 'Enter') doLogin(); });
+
+function doLogin() {
+  var token = document.getElementById('auth-input').value.trim();
+  if (!token) return;
+  apiToken = token;
+  apiReq('GET', '/api/pools').then(function() {
+    localStorage.setItem('airpool_token', token);
+    showApp();
+  }).catch(function() {
+    document.getElementById('auth-err').textContent = 'Token \u65e0\u6548\u6216\u670d\u52a1\u4e0d\u53ef\u8fbe';
+    apiToken = null;
+  });
+}
+
+function doLogout() {
+  localStorage.removeItem('airpool_token');
+  apiToken = null;
+  document.getElementById('app').style.display = 'none';
+  document.getElementById('auth-overlay').style.display = 'flex';
+  document.getElementById('auth-input').value = '';
+  document.getElementById('auth-err').textContent = '';
+}
+
+function showApp() {
+  document.getElementById('auth-overlay').style.display = 'none';
+  document.getElementById('app').style.display = 'block';
+  refresh().then(function() { renderDashboard(); });
+}
+
+// ─── Auto Refresh ───────────────────────────────
+setInterval(function() {
+  if (!apiToken || modalOpen) return;
+  refresh().then(renderActive).catch(function(){});
+}, 30000);
+
+// ─── Init ───────────────────────────────────────
+var savedToken = localStorage.getItem('airpool_token');
+if (savedToken) { apiToken = savedToken; showApp(); }
+
+})();
+</script>
+</body>
+</html>

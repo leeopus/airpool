@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# AirPool Node Uninstall Script
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+log()  { echo -e "${GREEN}[AirPool]${NC} $*"; }
+warn() { echo -e "${YELLOW}[AirPool]${NC} $*"; }
+err()  { echo -e "${RED}[AirPool]${NC} $*"; exit 1; }
+
+[[ $EUID -ne 0 ]] && err "Please run as root"
+
+echo -e "${YELLOW}This will completely remove Hysteria2 and AirPool from this node.${NC}"
+read -p "Continue? [y/N] " -r
+[[ ! $REPLY =~ ^[Yy]$ ]] && exit 0
+
+# Stop service
+log "Stopping Hysteria2..."
+systemctl stop hysteria-server 2>/dev/null || true
+systemctl disable hysteria-server 2>/dev/null || true
+
+# Remove port hopping rules
+log "Removing iptables rules..."
+iptables -t nat -D PREROUTING -p udp --dport 20000:40000 -j REDIRECT --to-ports 443 2>/dev/null || true
+if command -v netfilter-persistent &>/dev/null; then
+    netfilter-persistent save
+elif [[ -f /etc/iptables.rules ]]; then
+    iptables-save > /etc/iptables.rules
+fi
+
+# Remove files
+log "Removing files..."
+rm -f /usr/local/bin/hysteria
+rm -rf /etc/hysteria
+rm -f /etc/systemd/system/hysteria-server.service
+rm -f /usr/local/bin/airpool-upgrade
+rm -f /usr/local/bin/airpool-uninstall
+systemctl daemon-reload
+
+log "========================================="
+log "  Node uninstalled successfully!"
+log "  Note: Remember to delete this node"
+log "  from config center via API."
+log "========================================="

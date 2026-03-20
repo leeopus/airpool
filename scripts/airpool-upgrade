@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# AirPool Node Upgrade Script
+# Upgrades Hysteria2 to the latest version while preserving config
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+log()  { echo -e "${GREEN}[AirPool]${NC} $*"; }
+warn() { echo -e "${YELLOW}[AirPool]${NC} $*"; }
+err()  { echo -e "${RED}[AirPool]${NC} $*"; exit 1; }
+
+[[ $EUID -ne 0 ]] && err "Please run as root"
+
+HY2_BIN=$(command -v hysteria 2>/dev/null || echo "/usr/local/bin/hysteria")
+[[ ! -f "$HY2_BIN" ]] && err "Hysteria2 not found at $HY2_BIN"
+
+# Get current version
+CURRENT=$("$HY2_BIN" version 2>/dev/null | head -1 || echo "unknown")
+log "Current version: $CURRENT"
+
+# Backup
+BACKUP_DIR="/tmp/airpool-backup-$(date +%Y%m%d%H%M%S)"
+mkdir -p "$BACKUP_DIR"
+cp "$HY2_BIN" "$BACKUP_DIR/"
+cp -r /etc/hysteria "$BACKUP_DIR/"
+log "Backup saved to $BACKUP_DIR"
+
+# Download latest
+log "Downloading latest Hysteria2..."
+bash <(curl -fsSL https://get.hy2.sh/) || {
+    warn "Download failed, rolling back..."
+    cp "$BACKUP_DIR/hysteria" "$HY2_BIN"
+    systemctl restart hysteria-server
+    err "Upgrade failed, rolled back to previous version"
+}
+
+# Restart
+log "Restarting Hysteria2..."
+systemctl restart hysteria-server
+sleep 2
+
+# Verify
+if systemctl is-active --quiet hysteria-server; then
+    NEW=$("$HY2_BIN" version 2>/dev/null | head -1 || echo "unknown")
+    log "Upgrade successful: $CURRENT → $NEW"
+    log "Backup at $BACKUP_DIR (safe to delete)"
+else
+    warn "Service failed to start, rolling back..."
+    cp "$BACKUP_DIR/hysteria" "$HY2_BIN"
+    systemctl restart hysteria-server
+    sleep 2
+    if systemctl is-active --quiet hysteria-server; then
+        warn "Rolled back successfully"
+    else
+        err "Rollback failed! Check: journalctl -u hysteria-server"
+    fi
+    err "Upgrade failed"
+fi
