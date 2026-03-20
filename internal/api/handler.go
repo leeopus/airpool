@@ -644,9 +644,11 @@ log "Node IP: $NODE_IP"
 if systemctl is-active --quiet hysteria-server 2>/dev/null || [[ -f /etc/hysteria/config.yaml ]]; then
     warn "Detected existing AirPool deployment, tearing down..."
 
-    # Stop and disable service
+    # Stop and disable services
     systemctl stop hysteria-server 2>/dev/null || true
     systemctl disable hysteria-server 2>/dev/null || true
+    systemctl stop airpool-health.socket 2>/dev/null || true
+    systemctl disable airpool-health.socket 2>/dev/null || true
 
     # Remove iptables rules
     iptables -t nat -D PREROUTING -p udp --dport 20000:40000 -j REDIRECT --to-ports 443 2>/dev/null || true
@@ -656,6 +658,8 @@ if systemctl is-active --quiet hysteria-server 2>/dev/null || [[ -f /etc/hysteri
     rm -rf /etc/hysteria
     rm -f /etc/systemd/system/hysteria-server.service
     rm -f /etc/systemd/system/hysteria-server@.service
+    rm -f /etc/systemd/system/airpool-health.socket
+    rm -f /etc/systemd/system/airpool-health@.service
     systemctl daemon-reload
 
     # Deregister from config center (best effort)
@@ -723,7 +727,33 @@ IPTEOF
     fi
 fi
 
-# 6. Create systemd service and start
+# 6. Setup health check port (TCP 9443 via systemd socket)
+log "Setting up health check endpoint (TCP 9443)..."
+cat > /etc/systemd/system/airpool-health.socket << 'SOCKEOF'
+[Unit]
+Description=AirPool Health Check Socket
+
+[Socket]
+ListenStream=9443
+Accept=yes
+MaxConnections=64
+
+[Install]
+WantedBy=sockets.target
+SOCKEOF
+
+cat > /etc/systemd/system/airpool-health@.service << 'HCEOF'
+[Unit]
+Description=AirPool Health Check Handler
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c 'echo ok'
+StandardInput=socket
+StandardOutput=socket
+HCEOF
+
+# 7. Create systemd service and start
 log "Starting Hysteria2..."
 cat > /etc/systemd/system/hysteria-server.service << 'SVCEOF'
 [Unit]
@@ -742,6 +772,8 @@ WantedBy=multi-user.target
 SVCEOF
 
 systemctl daemon-reload
+systemctl enable airpool-health.socket
+systemctl start airpool-health.socket
 systemctl enable hysteria-server
 systemctl restart hysteria-server
 
