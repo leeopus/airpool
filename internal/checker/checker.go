@@ -1,10 +1,9 @@
 package checker
 
 import (
-	"crypto/tls"
 	"fmt"
 	"log"
-	"net/http"
+	"net"
 	"sync"
 	"time"
 
@@ -87,20 +86,44 @@ func (c *Checker) checkAll() {
 }
 
 func (c *Checker) checkNode(node store.Node) {
-	url := fmt.Sprintf("https://%s:443/", node.IP)
-	client := &http.Client{
-		Timeout: c.timeout,
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-		},
-	}
-	resp, err := client.Get(url)
-	if err == nil {
-		resp.Body.Close()
-		c.handleSuccess(node)
-	} else {
+	addr := fmt.Sprintf("%s:443", node.IP)
+	conn, err := net.DialTimeout("udp", addr, c.timeout)
+	if err != nil {
 		c.handleFailure(node)
+		return
 	}
+	defer conn.Close()
+
+	// Send a minimal QUIC Initial packet (version 1, any payload).
+	// A live QUIC server will respond; a dead port will trigger an
+	// ICMP port-unreachable which surfaces as a read error.
+	conn.SetDeadline(time.Now().Add(c.timeout))
+
+	// QUIC long header: Initial packet (type 0xc0), version 1
+	pkt := []byte{
+		0xc0,                   // long header, Initial
+		0x00, 0x00, 0x00, 0x01, // QUIC version 1
+		0x08,                                                       // DCID length = 8
+		0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,            // DCID
+		0x00, // SCID length = 0
+		0x00, // token length = 0
+		0x00, 0x01, // payload length = 1
+		0x00, // minimal payload
+	}
+
+	if _, err := conn.Write(pkt); err != nil {
+		c.handleFailure(node)
+		return
+	}
+
+	buf := make([]byte, 1500)
+	_, err = conn.Read(buf)
+	if err != nil {
+		// Read error (timeout or ICMP unreachable) = port not responding
+		c.handleFailure(node)
+		return
+	}
+	c.handleSuccess(node)
 }
 
 func (c *Checker) handleSuccess(node store.Node) {
