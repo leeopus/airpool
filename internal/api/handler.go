@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"strings"
 
+	"golang.org/x/crypto/bcrypt"
+
 	"github.com/airpool/airpool/web"
 
 	"github.com/airpool/airpool/internal/config"
@@ -22,13 +24,18 @@ type Handler struct {
 	cfgPath    string
 	store      *store.Store
 	generator  *subscribe.Generator
+	sessions   *sessionStore
 }
 
 func New(cfg *config.Config, cfgPath string, s *store.Store, gen *subscribe.Generator) *Handler {
-	return &Handler{cfg: cfg, cfgPath: cfgPath, store: s, generator: gen}
+	return &Handler{cfg: cfg, cfgPath: cfgPath, store: s, generator: gen, sessions: newSessionStore()}
 }
 
 func (h *Handler) Register(mux *http.ServeMux) {
+	mux.HandleFunc("/api/auth/login", h.handleLogin)
+	mux.HandleFunc("/api/auth/logout", h.handleLogout)
+	mux.HandleFunc("/api/auth/password", h.handleSetPassword)
+	mux.HandleFunc("/api/auth/status", h.handleAuthStatus)
 	mux.HandleFunc("/api/pools", h.handlePools)
 	mux.HandleFunc("/api/pools/", h.handlePoolByName)
 	mux.HandleFunc("/api/nodes", h.handleNodes)
@@ -342,8 +349,9 @@ func (h *Handler) handleConfig(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	h.requireAPIToken(w, r, func(w http.ResponseWriter, r *http.Request) {
+	h.requireAuth(w, r, func(w http.ResponseWriter, r *http.Request) {
 		jsonOK(w, map[string]string{
+			"api_token":          h.cfg.APIToken,
 			"hysteria2_password": h.cfg.Hysteria2Password,
 			"subscribe_token":   h.cfg.SubscribeToken,
 		})
@@ -423,18 +431,122 @@ func (h *Handler) handleInstallScript(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(installScript))
 }
 
-// --- Auth middleware ---
+// --- Auth ---
 
-func (h *Handler) requireAPIToken(w http.ResponseWriter, r *http.Request, next http.HandlerFunc) {
+func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		Token    string `json:"token"`
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid json", http.StatusBadRequest)
+		return
+	}
+
+	authenticated := false
+
+	if req.Token != "" && req.Token == h.cfg.APIToken {
+		authenticated = true
+	}
+
+	if !authenticated && req.Password != "" && h.cfg.PasswordHash != "" {
+		if bcrypt.CompareHashAndPassword([]byte(h.cfg.PasswordHash), []byte(req.Password)) == nil {
+			authenticated = true
+		}
+	}
+
+	if !authenticated {
+		jsonError(w, "invalid credentials", http.StatusUnauthorized)
+		return
+	}
+
+	sid := h.sessions.create()
+	setSessionCookie(w, sid)
+	hasPassword := h.cfg.PasswordHash != ""
+	log.Printf("[api] login successful (has_password=%v)", hasPassword)
+	jsonOK(w, map[string]interface{}{"status": "ok", "has_password": hasPassword})
+}
+
+func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if c, err := r.Cookie(sessionCookieName); err == nil {
+		h.sessions.remove(c.Value)
+	}
+	clearSessionCookie(w)
+	jsonOK(w, map[string]string{"status": "ok"})
+}
+
+func (h *Handler) handleSetPassword(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	h.requireAuth(w, r, func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Password string `json:"password"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			jsonError(w, "invalid json", http.StatusBadRequest)
+			return
+		}
+		if len(req.Password) < 6 {
+			jsonError(w, "password must be at least 6 characters", http.StatusBadRequest)
+			return
+		}
+		hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+		if err != nil {
+			jsonError(w, "hash error", http.StatusInternalServerError)
+			return
+		}
+		h.cfg.PasswordHash = string(hash)
+		if err := config.Save(h.cfgPath, h.cfg); err != nil {
+			jsonError(w, "save config: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		log.Printf("[api] password set successfully")
+		jsonOK(w, map[string]string{"status": "ok"})
+	})
+}
+
+func (h *Handler) handleAuthStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	jsonOK(w, map[string]interface{}{
+		"has_password": h.cfg.PasswordHash != "",
+	})
+}
+
+// requireAuth checks session cookie OR API token.
+func (h *Handler) requireAuth(w http.ResponseWriter, r *http.Request, next http.HandlerFunc) {
+	// Check session cookie
+	if c, err := r.Cookie(sessionCookieName); err == nil && h.sessions.valid(c.Value) {
+		next(w, r)
+		return
+	}
+	// Fall back to API token (for API/script usage)
 	token := r.Header.Get("Authorization")
 	if token == "" {
 		token = r.URL.Query().Get("token")
 	}
-	if token != h.cfg.APIToken {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+	if token == h.cfg.APIToken {
+		next(w, r)
 		return
 	}
-	next(w, r)
+	http.Error(w, "unauthorized", http.StatusUnauthorized)
+}
+
+// requireAPIToken kept for backward compatibility with scripts/install.
+func (h *Handler) requireAPIToken(w http.ResponseWriter, r *http.Request, next http.HandlerFunc) {
+	h.requireAuth(w, r, next)
 }
 
 // --- Helpers ---

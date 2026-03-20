@@ -31,6 +31,7 @@ type Config struct {
 	TelegramBotToken  string `toml:"telegram_bot_token"`
 	TelegramChatID    string `toml:"telegram_chat_id"`
 	AlertEmail        string `toml:"alert_email"`
+	PasswordHash      string `toml:"password_hash"`
 }
 
 func DefaultConfig() *Config {

@@ -121,10 +121,29 @@ tr:hover td{background:var(--surface2)}
 <div id="auth-overlay">
   <div class="auth-box">
     <h1>AirPool</h1>
-    <p>输入 API Token 登录管理面板</p>
+    <p id="auth-desc">登录管理面板</p>
     <div class="err" id="auth-err"></div>
-    <input type="password" id="auth-input" placeholder="ak_xxxxxxxx" autofocus>
+    <div id="login-tabs" style="display:flex;gap:0;margin-bottom:16px;border:1px solid var(--border);border-radius:var(--radius-sm);overflow:hidden">
+      <button class="login-tab active" data-mode="password" style="flex:1;padding:8px;background:var(--accent);color:#fff;font-size:12px;border:none">密码登录</button>
+      <button class="login-tab" data-mode="token" style="flex:1;padding:8px;background:var(--surface2);color:var(--text-muted);font-size:12px;border:none">Token 登录</button>
+    </div>
+    <input type="password" id="auth-password" placeholder="输入密码" autofocus style="display:none">
+    <input type="password" id="auth-token" placeholder="ak_xxxxxxxx" style="display:none">
     <button id="login-btn">登 录</button>
+  </div>
+</div>
+
+<div id="set-password-overlay" style="display:none;position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:rgba(15,17,23,.85);z-index:1001">
+  <div class="auth-box">
+    <h1>设置密码</h1>
+    <p>设置登录密码后，可以使用密码代替 Token 登录</p>
+    <div class="err" id="setpw-err"></div>
+    <input type="password" id="setpw-input" placeholder="输入密码（至少6位）">
+    <input type="password" id="setpw-confirm" placeholder="确认密码" style="margin-top:4px">
+    <div style="display:flex;gap:8px;margin-top:4px">
+      <button id="setpw-skip" style="flex:1;padding:10px;background:var(--surface2);color:var(--text-muted);border-radius:var(--radius-sm);font-weight:600;font-size:14px">跳 过</button>
+      <button id="setpw-btn" style="flex:1;padding:10px;background:var(--accent);color:#fff;border-radius:var(--radius-sm);font-weight:600;font-size:14px">确 定</button>
+    </div>
   </div>
 </div>
 
@@ -163,10 +182,8 @@ var escDiv = document.createElement('div');
 function esc(s) { escDiv.textContent = s || ''; return escDiv.innerHTML; }
 
 // ─── API ────────────────────────────────────────
-var apiToken = null;
-
 function apiReq(method, path, body) {
-  var opts = { method: method, headers: { 'Authorization': apiToken || '' } };
+  var opts = { method: method, headers: {} };
   if (body) { opts.headers['Content-Type'] = 'application/json'; opts.body = JSON.stringify(body); }
   return fetch(path, opts).then(function(r) {
     if (r.status === 401) { doLogout(); throw new Error('unauthorized'); }
@@ -503,7 +520,8 @@ function renderSettings() {
   // Token info section
   var g3 = h('div', {className:'setting-group'});
   g3.appendChild(h('h3', null, '\ud83d\udd11 Token \u4fe1\u606f'));
-  [['API Token', apiToken], ['Subscribe', subToken], ['Hy2 \u5bc6\u7801', hy2Pass]].forEach(function(item) {
+  var apiTokenVal = (S.config && S.config.api_token) || '\u2014';
+  [['API Token', apiTokenVal], ['Subscribe', subToken], ['Hy2 \u5bc6\u7801', hy2Pass]].forEach(function(item) {
     var row = h('div', {className:'setting-row'});
     row.appendChild(h('label', null, item[0]));
     row.appendChild(h('div', {className:'val'}, item[1]));
@@ -647,7 +665,8 @@ function updateDeployCmd() {
   }
   el.style.color = '';
   var host = location.host;
-  var cmd = 'curl -sL http://' + host + '/install.sh | bash -s -- \\\n  --server ' + host + ' \\\n  --token ' + apiToken + ' \\\n  --pool ' + pool;
+  var tkn = (S.config && S.config.api_token) || 'TOKEN';
+  var cmd = 'curl -skL https://' + host + '/install.sh | bash -s -- \\\n  --server ' + host + ' \\\n  --token ' + tkn + ' \\\n  --pool ' + pool;
   el.appendChild(document.createTextNode(cmd));
   var cpBtn = h('button', {className:'copy-btn', onClick: function(){copyElText('deploy-cmd')}}, '\u590d\u5236');
   el.appendChild(cpBtn);
@@ -703,46 +722,132 @@ function renderActive() {
 }
 
 // ─── Auth ───────────────────────────────────────
+var loginMode = 'password';
+
+// Tab switching
+document.querySelectorAll('.login-tab').forEach(function(tab) {
+  tab.addEventListener('click', function() {
+    loginMode = this.dataset.mode;
+    document.querySelectorAll('.login-tab').forEach(function(t) {
+      t.style.background = 'var(--surface2)'; t.style.color = 'var(--text-muted)'; t.className = 'login-tab';
+    });
+    this.style.background = 'var(--accent)'; this.style.color = '#fff'; this.className = 'login-tab active';
+    document.getElementById('auth-password').style.display = loginMode === 'password' ? '' : 'none';
+    document.getElementById('auth-token').style.display = loginMode === 'token' ? '' : 'none';
+    document.getElementById('auth-err').textContent = '';
+  });
+});
+
+// Init login form based on whether password is set
+fetch('/api/auth/status').then(function(r) { return r.json(); }).then(function(data) {
+  if (data.has_password) {
+    loginMode = 'password';
+    document.getElementById('auth-password').style.display = '';
+    document.getElementById('auth-token').style.display = 'none';
+  } else {
+    loginMode = 'token';
+    document.getElementById('login-tabs').style.display = 'none';
+    document.getElementById('auth-desc').textContent = '\u8f93\u5165 API Token \u767b\u5f55\u7ba1\u7406\u9762\u677f';
+    document.getElementById('auth-token').style.display = '';
+    document.getElementById('auth-password').style.display = 'none';
+  }
+}).catch(function() {
+  loginMode = 'token';
+  document.getElementById('login-tabs').style.display = 'none';
+  document.getElementById('auth-token').style.display = '';
+});
+
 document.getElementById('login-btn').addEventListener('click', doLogin);
-document.getElementById('auth-input').addEventListener('keydown', function(e) { if (e.key === 'Enter') doLogin(); });
+document.getElementById('auth-password').addEventListener('keydown', function(e) { if (e.key === 'Enter') doLogin(); });
+document.getElementById('auth-token').addEventListener('keydown', function(e) { if (e.key === 'Enter') doLogin(); });
 
 function doLogin() {
-  var token = document.getElementById('auth-input').value.trim();
-  if (!token) return;
-  apiToken = token;
-  apiReq('GET', '/api/pools').then(function() {
-    localStorage.setItem('airpool_token', token);
-    showApp();
-  }).catch(function() {
-    document.getElementById('auth-err').textContent = 'Token \u65e0\u6548\u6216\u670d\u52a1\u4e0d\u53ef\u8fbe';
-    apiToken = null;
+  var body = {};
+  if (loginMode === 'token') {
+    var token = document.getElementById('auth-token').value.trim();
+    if (!token) return;
+    body.token = token;
+  } else {
+    var password = document.getElementById('auth-password').value;
+    if (!password) return;
+    body.password = password;
+  }
+  fetch('/api/auth/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  }).then(function(r) {
+    return r.json().then(function(data) {
+      if (!r.ok) throw new Error(data.error || 'login failed');
+      return data;
+    });
+  }).then(function(data) {
+    localStorage.setItem('airpool_logged_in', '1');
+    if (loginMode === 'token' && !data.has_password) {
+      showSetPasswordDialog();
+    } else {
+      showApp();
+    }
+  }).catch(function(err) {
+    document.getElementById('auth-err').textContent = loginMode === 'token' ? 'Token \u65e0\u6548\u6216\u670d\u52a1\u4e0d\u53ef\u8fbe' : '\u5bc6\u7801\u9519\u8bef';
   });
 }
 
+function showSetPasswordDialog() {
+  document.getElementById('auth-overlay').style.display = 'none';
+  document.getElementById('set-password-overlay').style.display = 'flex';
+}
+
+document.getElementById('setpw-btn').addEventListener('click', function() {
+  var pw = document.getElementById('setpw-input').value;
+  var pw2 = document.getElementById('setpw-confirm').value;
+  if (pw.length < 6) { document.getElementById('setpw-err').textContent = '\u5bc6\u7801\u81f3\u5c116\u4f4d'; return; }
+  if (pw !== pw2) { document.getElementById('setpw-err').textContent = '\u4e24\u6b21\u5bc6\u7801\u4e0d\u4e00\u81f4'; return; }
+  apiReq('POST', '/api/auth/password', { password: pw }).then(function() {
+    document.getElementById('set-password-overlay').style.display = 'none';
+    showApp();
+  }).catch(function(err) {
+    document.getElementById('setpw-err').textContent = err.message;
+  });
+});
+
+document.getElementById('setpw-skip').addEventListener('click', function() {
+  document.getElementById('set-password-overlay').style.display = 'none';
+  showApp();
+});
+
 function doLogout() {
-  localStorage.removeItem('airpool_token');
-  apiToken = null;
+  fetch('/api/auth/logout', { method: 'POST' }).catch(function(){});
+  localStorage.removeItem('airpool_logged_in');
   document.getElementById('app').style.display = 'none';
   document.getElementById('auth-overlay').style.display = 'flex';
-  document.getElementById('auth-input').value = '';
+  document.getElementById('auth-password').value = '';
+  document.getElementById('auth-token').value = '';
   document.getElementById('auth-err').textContent = '';
 }
 
 function showApp() {
   document.getElementById('auth-overlay').style.display = 'none';
+  document.getElementById('set-password-overlay').style.display = 'none';
   document.getElementById('app').style.display = 'block';
   refresh().then(function() { renderDashboard(); });
 }
 
 // ─── Auto Refresh ───────────────────────────────
 setInterval(function() {
-  if (!apiToken || modalOpen) return;
+  if (!localStorage.getItem('airpool_logged_in') || modalOpen) return;
   refresh().then(renderActive).catch(function(){});
 }, 30000);
 
 // ─── Init ───────────────────────────────────────
-var savedToken = localStorage.getItem('airpool_token');
-if (savedToken) { apiToken = savedToken; showApp(); }
+var wasLoggedIn = localStorage.getItem('airpool_logged_in');
+if (wasLoggedIn) {
+  // Try to access API with existing session cookie
+  fetch('/api/pools').then(function(r) {
+    if (r.ok) { showApp(); }
+    else { localStorage.removeItem('airpool_logged_in'); }
+  }).catch(function() { localStorage.removeItem('airpool_logged_in'); });
+}
 
 })();
 </script>
